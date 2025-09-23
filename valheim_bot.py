@@ -11,6 +11,16 @@ if not WEBHOOK:
     print("Error: WEBHOOK environment variable is not set.", file=sys.stderr)
     sys.exit(1)
 
+# load known SteamID → player name map from env
+PLAYER_MAP = {}
+raw_map = os.environ.get("PLAYER_MAP")
+if raw_map:
+    try:
+        PLAYER_MAP = json.loads(raw_map)
+    except json.JSONDecodeError as e:
+        print(f"Error: PLAYER_MAP env var is not valid JSON: {e}", file=sys.stderr)
+        sys.exit(1)
+
 death_messages = [
     "☠️ $PLAYER_NAME was slain.",
     "☠️ $PLAYER_NAME met their doom.",
@@ -55,7 +65,7 @@ def main():
         print("Error: 'valheim' container not found.", file=sys.stderr)
         sys.exit(1)
 
-    players = {}
+    players = dict(PLAYER_MAP)  # pre-fill with known mappings
     pending = []
     welcome_count = 0
 
@@ -67,11 +77,17 @@ def main():
         while b"\n" in buffer:
             line, buffer = buffer.split(b"\n", 1)
             line = line.decode("utf-8", errors="ignore").strip()
+
             # --- Got connection ---
             if "Got connection SteamID" in line:
                 steamid = line.split()[-1]
-                pending.append(steamid)
-                welcome_count += 1
+
+                if steamid in players:
+                    # Already known → increment welcome immediately
+                    welcome_count += 1
+                else:
+                    # Unknown → wait for ZDOID mapping
+                    pending.append(steamid)
 
             # --- Got character ZDOID from ---
             elif "Got character ZDOID from" in line:
@@ -98,7 +114,7 @@ def main():
             # --- Closing socket ---
             elif "Closing socket" in line:
                 steamid = line.split()[-1]
-                player_name = players.pop(steamid, "Unknown Player")
+                player_name = players.get(steamid, "Unknown Player")
                 send_webhook(f"❌ {player_name} has dropped.")
 
 if __name__ == "__main__":
